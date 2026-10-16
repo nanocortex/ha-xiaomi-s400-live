@@ -23,6 +23,8 @@ IDLE_TIMEOUT = 20.0
 AFTER_FINAL_GRACE = 4.0
 # Do not reconnect right after a session (scale keeps advertising the result).
 RECONNECT_COOLDOWN = 10.0
+# After sessions where the scale sent nothing, back off up to this long (reset on new advertisement data).
+MAX_RECONNECT_BACKOFF = 120.0
 
 EVENT_MEASUREMENT = f"{DOMAIN}_measurement"
 

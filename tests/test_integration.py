@@ -215,3 +215,27 @@ async def test_heart_rate_from_advertisement(hass: HomeAssistant) -> None:
     assert hass.states.get(ids[f"{ADDRESS}_heart_rate"]).state == "66"
     assert len(events) == 1 and events[0].data["heart_rate"] == 66 and events[0].data["person"] == "Asia"
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_backoff_after_empty_session(hass: HomeAssistant) -> None:
+    entry = _entry([("Dave", 1, "male")])
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    scale = FakeScale(bytes.fromhex(TOKEN_HEX))
+    scale.disconnect = AsyncMock()
+
+    async def fake_connect(*args, **kwargs):
+        return scale
+
+    with (
+        patch("custom_components.xiaomi_s400_live.coordinator.establish_connection", side_effect=fake_connect),
+        patch("custom_components.xiaomi_s400_live.coordinator.close_stale_connections_by_address", AsyncMock()),
+        patch("custom_components.xiaomi_s400_live.coordinator.IDLE_TIMEOUT", 0.05),
+    ):
+        await coordinator._async_session(object())
+        assert coordinator._backoff == 20.0
+        await coordinator._async_session(object())
+        assert coordinator._backoff == 40.0
+    assert await hass.config_entries.async_unload(entry.entry_id)

@@ -9,7 +9,6 @@ from typing import Any
 from homeassistant.components.sensor import (
     RestoreSensor,
     SensorDeviceClass,
-    SensorEntity,
     SensorEntityDescription,
     SensorStateClass,
 )
@@ -216,7 +215,12 @@ async def async_setup_entry(
         )
 
 
-class ScaleSensor(S400Entity, SensorEntity):
+NOT_RESTORED = {"last_error", "raw_final"}
+
+
+class ScaleSensor(S400Entity, RestoreSensor):
+    """Scale-level value; falls back to the last known value after a restart or reload."""
+
     entity_description: ScaleSensorDescription
 
     def __init__(self, coordinator: S400Coordinator, description: ScaleSensorDescription) -> None:
@@ -224,10 +228,22 @@ class ScaleSensor(S400Entity, SensorEntity):
         self.entity_description = description
         self._attr_unique_id = f"{coordinator.address}_{description.key}"
         self._attr_device_info = scale_device_info(coordinator)
+        self._restored: Any = None
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        if self.entity_description.key in NOT_RESTORED:
+            return
+        if (last := await self.async_get_last_sensor_data()) is not None:
+            value = last.native_value
+            if self.device_class == SensorDeviceClass.TIMESTAMP and isinstance(value, str):
+                value = dt_util.parse_datetime(value)
+            self._restored = value
 
     @property
     def native_value(self) -> Any:
-        return self.entity_description.value_fn(self.coordinator.state)
+        value = self.entity_description.value_fn(self.coordinator.state)
+        return self._restored if value is None else value
 
 
 class PersonSensor(S400Entity, RestoreSensor):

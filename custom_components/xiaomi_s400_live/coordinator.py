@@ -33,6 +33,7 @@ from .const import (
     EVENT_MEASUREMENT,
     HEART_RATE_WAIT,
     IDLE_TIMEOUT,
+    MAX_RECONNECT_BACKOFF,
     MIBEACON_UUID,
     RECONNECT_COOLDOWN,
     SUBENTRY_PERSON,
@@ -117,6 +118,9 @@ class S400Coordinator:
         self._unsub: list[CALLBACK_TYPE] = []
         self._task: asyncio.Task | None = None
         self._last_session_end = 0.0
+        self._backoff = RECONNECT_COOLDOWN
+        self._last_counter: int | None = None
+        self._session_had_data = False
         self._stopping = False
         self._load_persons()
 
@@ -177,11 +181,22 @@ class S400Coordinator:
     def _async_on_advertisement(
         self, service_info: bluetooth.BluetoothServiceInfoBleak, change: bluetooth.BluetoothChange
     ) -> None:
+        data = service_info.service_data.get(MIBEACON_UUID) or b""
+        counter = data[4] if len(data) >= 5 else None
+        frctrl = data[0] | (data[1] << 8) if len(data) >= 2 else 0
+        if counter is not None and counter != self._last_counter:
+            _LOGGER.debug(
+                "Adv %s: counter %s -> %s, object=%s, len=%s, rssi=%s",
+                self.address, self._last_counter, counter, (frctrl >> 6) & 1, len(data), service_info.rssi,
+            )
+            if self._last_counter is not None:
+                self._backoff = RECONNECT_COOLDOWN  # scale has something new: retry soon
+            self._last_counter = counter
         if self.bindkey:
             self._check_heart_rate(service_info)
         if self._stopping or (self._task and not self._task.done()):
             return
-        if time.monotonic() - self._last_session_end < RECONNECT_COOLDOWN:
+        if time.monotonic() - self._last_session_end < self._backoff:
             return
         _LOGGER.debug("Advertisement from %s (rssi %s), connecting", self.address, service_info.rssi)
         self._task = self.entry.async_create_background_task(
@@ -219,14 +234,19 @@ class S400Coordinator:
             self._notify()
 
             await session.login()
-            _LOGGER.debug("Logged in to %s", self.address)
+            _LOGGER.debug("Logged in to %s, waiting for frames", self.address)
+            self._session_had_data = False
             await self._async_pump(session)
+            _LOGGER.debug("Session with %s ended (data received: %s)", self.address, self._session_had_data)
         except BadTokenError:
             _LOGGER.error("S400 %s rejected the login token. Re-extract it and reconfigure.", self.address)
             self.state.last_error = "bad_token"
             self.entry.async_start_reauth(self.hass)
         except (AuthError, BleakError, TimeoutError) as err:
             _LOGGER.debug("S400 session with %s failed: %s", self.address, err)
+            self.state.last_error = str(err) or type(err).__name__
+        except Exception as err:
+            _LOGGER.exception("Unexpected error in S400 session with %s", self.address)
             self.state.last_error = str(err) or type(err).__name__
         finally:
             if client is not None:
@@ -235,6 +255,12 @@ class S400Coordinator:
                 except Exception:  # noqa: BLE001
                     pass
             self._last_session_end = time.monotonic()
+            if self._session_had_data:
+                self._backoff = RECONNECT_COOLDOWN
+            else:
+                # Nothing happened: back off so we don't keep a proxy slot busy for nothing.
+                self._backoff = min(self._backoff * 2, MAX_RECONNECT_BACKOFF)
+            _LOGGER.debug("Next connection attempt in >= %.0f s", self._backoff)
             self.state.connected = False
             self.state.on_scale = False
             self.state.stable = False
@@ -246,6 +272,8 @@ class S400Coordinator:
             event = await session.next_event(AFTER_FINAL_GRACE if got_final else IDLE_TIMEOUT)
             if event is None:
                 return
+            self._session_had_data = True
+            _LOGGER.debug("Event %s fields=%s", event.type, event.fields)
             if event.type == "live":
                 self.state.on_scale = True
                 self.state.live_weight = event.weight_kg
