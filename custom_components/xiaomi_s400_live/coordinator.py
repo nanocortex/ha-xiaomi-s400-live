@@ -20,6 +20,7 @@ from homeassistant.components import bluetooth
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_ADDRESS, CONF_NAME
 from homeassistant.core import CALLBACK_TYPE, HomeAssistant, callback
+from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -30,16 +31,19 @@ from .const import (
     CONF_PROFILE_ID,
     CONF_SEX,
     CONF_TOKEN,
+    CONNECT_CHECK_INTERVAL,
     EVENT_MEASUREMENT,
+    FAILURE_BACKOFF_MAX,
+    FAILURE_BACKOFF_MIN,
     HEART_RATE_WAIT,
-    IDLE_TIMEOUT,
-    MAX_RECONNECT_BACKOFF,
+    IDLE_CHECK,
     MIBEACON_UUID,
-    RECONNECT_COOLDOWN,
+    POST_MEASUREMENT_PAUSE,
+    RECONNECT_AFTER_DROP,
     SUBENTRY_PERSON,
 )
 from .s400 import AuthError, BadTokenError, S400Session, ScaleEvent, UserProfile, compute
-from .s400.mibeacon import decode_advertisement
+from .s400.mibeacon import AdvReading, decode_advertisement
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -96,6 +100,16 @@ class ScaleState:
     last_raw_fields: list[str] = field(default_factory=list)
 
 
+def _same_weighing(reading: AdvReading, measurement: Measurement) -> bool:
+    """Match an advertisement to a GATT measurement by weight.
+
+    Profile ids are not comparable: the broadcast numbers users differently from the GATT frame.
+    """
+    if reading.weight_kg is None or measurement.weight_kg is None:
+        return False
+    return abs(reading.weight_kg - measurement.weight_kg) < 0.15
+
+
 class S400Coordinator:
     """Owns the BLE session lifecycle and fans out updates to entities."""
 
@@ -110,17 +124,16 @@ class S400Coordinator:
         self._hr_deadline = 0.0
         self._pending_event: tuple[Measurement, Person | None] | None = None
         self._pending_handle: asyncio.TimerHandle | None = None
-        self._last_adv_hr: tuple[float, int, int] | None = None  # (monotonic, profile_id, bpm)
+        self._last_adv_hr: tuple[float, AdvReading] | None = None  # (monotonic, reading with heart rate)
         self.state = ScaleState()
         self.persons: dict[int, Person] = {}
         self.person_measurements: dict[str, Measurement] = {}
         self._listeners: list[Callable[[], None]] = []
         self._unsub: list[CALLBACK_TYPE] = []
         self._task: asyncio.Task | None = None
-        self._last_session_end = 0.0
-        self._backoff = RECONNECT_COOLDOWN
+        self._next_attempt = 0.0
+        self._failure_backoff = FAILURE_BACKOFF_MIN
         self._last_counter: int | None = None
-        self._session_had_data = False
         self._stopping = False
         self._load_persons()
 
@@ -162,6 +175,11 @@ class S400Coordinator:
                 bluetooth.BluetoothScanningMode.ACTIVE,
             )
         )
+        # HA only calls us back when the advertisement *changes*. A scale that keeps sending the same
+        # idle packet would never trigger a connection, so also check periodically.
+        self._unsub.append(
+            async_track_time_interval(self.hass, self._async_tick, CONNECT_CHECK_INTERVAL, cancel_on_shutdown=True)
+        )
 
     async def async_stop(self) -> None:
         self._stopping = True
@@ -183,30 +201,41 @@ class S400Coordinator:
     ) -> None:
         data = service_info.service_data.get(MIBEACON_UUID) or b""
         counter = data[4] if len(data) >= 5 else None
-        frctrl = data[0] | (data[1] << 8) if len(data) >= 2 else 0
         if counter is not None and counter != self._last_counter:
+            frctrl = data[0] | (data[1] << 8)
             _LOGGER.debug(
-                "Adv %s: counter %s -> %s, object=%s, len=%s, rssi=%s",
-                self.address, self._last_counter, counter, (frctrl >> 6) & 1, len(data), service_info.rssi,
+                "Adv %s: counter %s -> %s, object=%s, rssi=%s",
+                self.address, self._last_counter, counter, (frctrl >> 6) & 1, service_info.rssi,
             )
-            if self._last_counter is not None:
-                self._backoff = RECONNECT_COOLDOWN  # scale has something new: retry soon
             self._last_counter = counter
         if self.bindkey:
             self._check_heart_rate(service_info)
+        self._maybe_connect(service_info.device)
+
+    @callback
+    def _async_tick(self, _now: Any = None) -> None:
+        if self._task and not self._task.done():
+            return
+        device = bluetooth.async_ble_device_from_address(self.hass, self.address, connectable=True)
+        if device is not None:
+            self._maybe_connect(device)
+
+    @callback
+    def _maybe_connect(self, device: Any) -> None:
         if self._stopping or (self._task and not self._task.done()):
             return
-        if time.monotonic() - self._last_session_end < self._backoff:
+        if time.monotonic() < self._next_attempt:
             return
-        _LOGGER.debug("Advertisement from %s (rssi %s), connecting", self.address, service_info.rssi)
+        _LOGGER.debug("Connecting to %s", self.address)
         self._task = self.entry.async_create_background_task(
-            self.hass, self._async_session(service_info.device), f"{self.address} S400 session"
+            self.hass, self._async_session(device), f"{self.address} S400 session"
         )
 
     # ---- session ---------------------------------------------------------
 
     async def _async_session(self, device: Any) -> None:
         client = None
+        next_delay = RECONNECT_AFTER_DROP
         try:
             await close_stale_connections_by_address(self.address)
             session_ref: list[S400Session] = []
@@ -234,45 +263,58 @@ class S400Coordinator:
             self._notify()
 
             await session.login()
-            _LOGGER.debug("Logged in to %s, waiting for frames", self.address)
-            self._session_had_data = False
-            await self._async_pump(session)
-            _LOGGER.debug("Session with %s ended (data received: %s)", self.address, self._session_had_data)
+            _LOGGER.debug("Logged in to %s, staying connected and waiting for a weigh-in", self.address)
+            self._failure_backoff = FAILURE_BACKOFF_MIN
+            outcome = await self._async_pump(session)
+            if outcome == "measured":
+                # Let the scale broadcast its result (heart rate, 2nd impedance) before reconnecting.
+                next_delay = POST_MEASUREMENT_PAUSE
+            else:
+                next_delay = RECONNECT_AFTER_DROP
+            _LOGGER.debug("Session with %s ended: %s", self.address, outcome)
         except BadTokenError:
+            next_delay = FAILURE_BACKOFF_MAX
             _LOGGER.error("S400 %s rejected the login token. Re-extract it and reconfigure.", self.address)
             self.state.last_error = "bad_token"
             self.entry.async_start_reauth(self.hass)
         except (AuthError, BleakError, TimeoutError) as err:
             _LOGGER.debug("S400 session with %s failed: %s", self.address, err)
             self.state.last_error = str(err) or type(err).__name__
+            next_delay = self._bump_backoff()
         except Exception as err:
             _LOGGER.exception("Unexpected error in S400 session with %s", self.address)
             self.state.last_error = str(err) or type(err).__name__
+            next_delay = self._bump_backoff()
         finally:
             if client is not None:
                 try:
                     await client.disconnect()
                 except Exception:  # noqa: BLE001
                     pass
-            self._last_session_end = time.monotonic()
-            if self._session_had_data:
-                self._backoff = RECONNECT_COOLDOWN
-            else:
-                # Nothing happened: back off so we don't keep a proxy slot busy for nothing.
-                self._backoff = min(self._backoff * 2, MAX_RECONNECT_BACKOFF)
-            _LOGGER.debug("Next connection attempt in >= %.0f s", self._backoff)
+            delay = next_delay
+            self._next_attempt = time.monotonic() + delay
+            _LOGGER.debug("Next connection attempt in >= %.0f s", delay)
             self.state.connected = False
             self.state.on_scale = False
             self.state.stable = False
             self._notify()
 
-    async def _async_pump(self, session: S400Session) -> None:
+    def _bump_backoff(self) -> float:
+        delay = self._failure_backoff
+        self._failure_backoff = min(self._failure_backoff * 2, FAILURE_BACKOFF_MAX)
+        return delay
+
+    async def _async_pump(self, session: S400Session) -> str:
+        """Stay connected until a measurement completes, the link drops, or we stop."""
         got_final = False
         while not self._stopping:
-            event = await session.next_event(AFTER_FINAL_GRACE if got_final else IDLE_TIMEOUT)
+            event = await session.next_event(AFTER_FINAL_GRACE if got_final else IDLE_CHECK)
             if event is None:
-                return
-            self._session_had_data = True
+                if session.disconnected:
+                    return "measured" if got_final else "disconnected by scale"
+                if got_final:
+                    return "measured"
+                continue  # idle: keep the link open so live weight arrives immediately
             _LOGGER.debug("Event %s fields=%s", event.type, event.fields)
             if event.type == "live":
                 self.state.on_scale = True
@@ -284,6 +326,7 @@ class S400Coordinator:
                 self._handle_final(event)
             else:
                 _LOGGER.debug("Unparsed frame %s fields=%s", event.plaintext.hex(" "), event.fields)
+        return "stopped"
 
     @callback
     def _handle_final(self, event: ScaleEvent) -> None:
@@ -322,8 +365,8 @@ class S400Coordinator:
         self._hr_deadline = time.monotonic() + HEART_RATE_WAIT
         # The heart-rate advertisement may already have arrived before the GATT final frame.
         if self._last_adv_hr and time.monotonic() - self._last_adv_hr[0] < HEART_RATE_WAIT:
-            if self._last_adv_hr[1] == event.profile_id:
-                measurement.heart_rate = self._last_adv_hr[2]
+            if _same_weighing(self._last_adv_hr[1], measurement):
+                measurement.heart_rate = self._last_adv_hr[1].heart_rate
         self._notify()
 
         self._fire_pending()  # flush a previous measurement still waiting for heart rate
@@ -345,14 +388,14 @@ class S400Coordinator:
         _LOGGER.debug("Advertisement reading: %s", reading)
         if reading.heart_rate is not None:
             self.state.heart_rate = reading.heart_rate
-            self._last_adv_hr = (time.monotonic(), reading.profile_id, reading.heart_rate)
+            self._last_adv_hr = (time.monotonic(), reading)
         m = self.state.last_measurement
         if (
             reading.heart_rate is None
             or m is None
             or m.heart_rate is not None
             or time.monotonic() > self._hr_deadline
-            or reading.profile_id != m.profile_id
+            or not _same_weighing(reading, m)
         ):
             self._notify()
             return

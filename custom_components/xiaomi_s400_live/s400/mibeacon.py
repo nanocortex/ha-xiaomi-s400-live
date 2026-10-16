@@ -22,6 +22,7 @@ class AdvReading:
     heart_rate: int | None
     impedance_ohm: float | None
     frame_counter: int
+    timestamp: int = 0
 
 
 def decode_advertisement(service_data: bytes, mac: str, bindkey: bytes) -> AdvReading | None:
@@ -60,7 +61,7 @@ def decode_advertisement(service_data: bytes, mac: str, bindkey: bytes) -> AdvRe
         payload = payload[3 + length :]
         if obj_type != S400_OBJECT or len(obj) < 9:
             continue
-        profile_id, packed, _ts = struct.unpack("<BII", obj[:9])
+        profile_id, packed, ts = struct.unpack("<BII", obj[:9])
         mass = packed & 0x7FF
         hr = (packed >> 11) & 0x7F
         imp = packed >> 18
@@ -70,6 +71,7 @@ def decode_advertisement(service_data: bytes, mac: str, bindkey: bytes) -> AdvRe
             heart_rate=hr + 50 if 0 < hr < 127 else None,
             impedance_ohm=imp / 10 if imp else None,
             frame_counter=data[4],
+            timestamp=ts,
         )
     return None
 

@@ -159,7 +159,7 @@ class S400ConfigFlow(ConfigFlow, domain=DOMAIN):
             except ValueError:
                 errors[CONF_TOKEN] = "invalid_token"
             else:
-                return self.async_update_reload_and_abort(
+                return self.async_update_and_abort(
                     self._get_reauth_entry(), data_updates={CONF_TOKEN: token}
                 )
         return self.async_show_form(
@@ -179,7 +179,7 @@ class S400ConfigFlow(ConfigFlow, domain=DOMAIN):
         if user_input is not None:
             token, bindkey = _validate_keys(user_input, errors)
             if not errors:
-                return self.async_update_reload_and_abort(
+                return self.async_update_and_abort(
                     self._get_reconfigure_entry(), data_updates={CONF_TOKEN: token, CONF_BINDKEY: bindkey}
                 )
         entry = self._get_reconfigure_entry()

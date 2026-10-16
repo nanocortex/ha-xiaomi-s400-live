@@ -69,10 +69,12 @@ Body composition values are estimates computed from weight, impedance and your p
 
 ## How it works
 
-1. HA reports an advertisement from the scale (it wakes up when you step on it).
-2. The integration connects (via a proxy if needed) and runs the Mi Home v2 LOGIN: random key exchange, HKDF-SHA256 key derivation from the token, HMAC verification.
+1. Whenever the scale is reachable, the integration connects (via a proxy if needed) and runs the Mi Home v2 LOGIN: random key exchange, HKDF-SHA256 key derivation from the token, HMAC verification.
+2. It **keeps the connection open** and waits. The scale only streams weight to a client that is already logged in when someone steps on it. Connecting after the advertisement is too late, because by then the scale has already finished measuring.
 3. It reads AES-CCM encrypted frames: `live` (weight, stable flag) and `final` (profile, weight, timestamp, two impedances).
-4. It disconnects after the final frame or after 20 s idle, then waits 10 s before reconnecting (so the next person can weigh in right away).
+4. After a measurement it disconnects for 15 s so the scale can broadcast the heart rate. If the scale drops an idle link, the integration reconnects within a few seconds.
+
+This keeps one connection slot of your Bluetooth adapter or ESPHome proxy busy most of the time.
 
 ## Troubleshooting
 

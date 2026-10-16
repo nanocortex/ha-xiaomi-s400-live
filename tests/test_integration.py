@@ -217,7 +217,8 @@ async def test_heart_rate_from_advertisement(hass: HomeAssistant) -> None:
     assert await hass.config_entries.async_unload(entry.entry_id)
 
 
-async def test_backoff_after_empty_session(hass: HomeAssistant) -> None:
+async def test_stays_connected_until_weigh_in(hass: HomeAssistant) -> None:
+    """Regression for v0.2.x: the session must not drop after an idle period before anyone steps on."""
     entry = _entry([("Dave", 1, "male")])
     entry.add_to_hass(hass)
     assert await hass.config_entries.async_setup(entry.entry_id)
@@ -232,10 +233,60 @@ async def test_backoff_after_empty_session(hass: HomeAssistant) -> None:
     with (
         patch("custom_components.xiaomi_s400_live.coordinator.establish_connection", side_effect=fake_connect),
         patch("custom_components.xiaomi_s400_live.coordinator.close_stale_connections_by_address", AsyncMock()),
-        patch("custom_components.xiaomi_s400_live.coordinator.IDLE_TIMEOUT", 0.05),
+        patch("custom_components.xiaomi_s400_live.coordinator.IDLE_CHECK", 0.02),
+        patch("custom_components.xiaomi_s400_live.coordinator.AFTER_FINAL_GRACE", 0.05),
     ):
-        await coordinator._async_session(object())
-        assert coordinator._backoff == 20.0
-        await coordinator._async_session(object())
-        assert coordinator._backoff == 40.0
+        task = hass.async_create_task(coordinator._async_session(object()))
+        for _ in range(300):
+            await asyncio.sleep(0.01)
+            if scale.state == "ready":
+                break
+        await asyncio.sleep(0.3)  # many idle periods after login
+        assert not task.done()
+        assert coordinator.state.connected
+        scale.send_csv("909,1")
+        scale.send_csv(FINAL_DAVE)
+        await asyncio.wait_for(task, 5)
+    assert coordinator.state.last_measurement.weight_kg == 90.9
+    assert not coordinator.state.connected
+    import time as _t
+
+    assert coordinator._next_attempt - _t.monotonic() > 10  # pause after a measurement
     assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+async def test_reconnects_fast_after_scale_drops_link(hass: HomeAssistant) -> None:
+    entry = _entry([("Dave", 1, "male")])
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    scale = FakeScale(bytes.fromhex(TOKEN_HEX))
+    scale.disconnect = AsyncMock()
+
+    async def fake_connect(*args, disconnected_callback=None, **kwargs):
+        hass.loop.call_later(0.1, disconnected_callback, scale)
+        return scale
+
+    with (
+        patch("custom_components.xiaomi_s400_live.coordinator.establish_connection", side_effect=fake_connect),
+        patch("custom_components.xiaomi_s400_live.coordinator.close_stale_connections_by_address", AsyncMock()),
+    ):
+        await asyncio.wait_for(coordinator._async_session(object()), 5)
+    import time as _t
+
+    assert coordinator._next_attempt - _t.monotonic() < 3
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+def test_heart_rate_matched_by_weight() -> None:
+    from datetime import UTC, datetime
+
+    from custom_components.xiaomi_s400_live.coordinator import Measurement, _same_weighing
+    from custom_components.xiaomi_s400_live.s400.mibeacon import AdvReading
+
+    m = Measurement(profile_id=1, weight_kg=76.0, impedance_ohm=493.0, impedance_low_ohm=445.0,
+                    measured_at=datetime.now(UTC))
+    # Real log: broadcast said profile 2 while the GATT frame said profile 1 for the same weigh-in.
+    assert _same_weighing(AdvReading(2, 76.0, 80, 501.7, 59), m)
+    assert not _same_weighing(AdvReading(2, 61.2, 70, 565.0, 60), m)
