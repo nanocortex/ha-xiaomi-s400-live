@@ -1,0 +1,184 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Waga Xiaomi S400",
+        "description": "Wybierz wykrytą wagę lub wpisz jej adres MAC. Waga musi być w zasięgu adaptera Bluetooth Home Assistanta albo proxy Bluetooth ESPHome z `active: true`.",
+        "data": {
+          "address": "Adres MAC"
+        }
+      },
+      "credentials": {
+        "title": "Token logowania",
+        "description": "Waga {address}. Wklej 24-znakowy **TOKEN** tej wagi z Xiaomi-cloud-tokens-extractor (nie 32-znakowy BLE KEY).",
+        "data": {
+          "token": "Token",
+          "name": "Nazwa"
+        },
+        "data_description": {
+          "token": "24 znaki hex, np. 0123456789abcdef01234567"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Token odrzucony",
+        "description": "Waga odrzuciła token. Dzieje się tak po resecie wagi albo ponownym dodaniu jej w Mi Home. Wyciągnij token jeszcze raz i wklej go tutaj.",
+        "data": {
+          "token": "Token"
+        },
+        "data_description": {
+          "token": "24 znaki hex, np. 0123456789abcdef01234567"
+        }
+      },
+      "reconfigure": {
+        "title": "Zmień token",
+        "data": {
+          "token": "Token"
+        },
+        "data_description": {
+          "token": "24 znaki hex, np. 0123456789abcdef01234567"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Nieprawidłowy adres MAC (oczekiwany AA:BB:CC:DD:EE:FF)",
+      "invalid_token": "Token musi mieć dokładnie 24 znaki hex"
+    },
+    "abort": {
+      "already_configured": "Ta waga jest już skonfigurowana",
+      "not_supported": "To urządzenie nie jest wagą Xiaomi S400",
+      "reauth_successful": "Token zaktualizowany",
+      "reconfigure_successful": "Token zaktualizowany"
+    }
+  },
+  "config_subentries": {
+    "person": {
+      "entry_type": "Osoba",
+      "initiate_flow": {
+        "user": "Dodaj osobę",
+        "reconfigure": "Edytuj osobę"
+      },
+      "step": {
+        "user": {
+          "title": "Osoba",
+          "description": "Przypisz profil użytkownika wagi do osoby. Zważ się raz samodzielnie i sprawdź sensor **ID profilu**, żeby poznać swój numer.",
+          "data": {
+            "name": "Nazwa",
+            "profile_id": "ID profilu na wadze",
+            "sex": "Płeć",
+            "birthday": "Data urodzenia",
+            "height": "Wzrost"
+          }
+        },
+        "reconfigure": {
+          "title": "Osoba",
+          "description": "Przypisz profil użytkownika wagi do osoby. Zważ się raz samodzielnie i sprawdź sensor **ID profilu**, żeby poznać swój numer.",
+          "data": {
+            "name": "Nazwa",
+            "profile_id": "ID profilu na wadze",
+            "sex": "Płeć",
+            "birthday": "Data urodzenia",
+            "height": "Wzrost"
+          }
+        }
+      },
+      "error": {
+        "profile_in_use": "Inna osoba używa już tego ID profilu"
+      },
+      "abort": {
+        "reconfigure_successful": "Token zaktualizowany"
+      }
+    }
+  },
+  "selector": {
+    "sex": {
+      "options": {
+        "male": "Mężczyzna",
+        "female": "Kobieta"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "on_scale": {
+        "name": "Na wadze"
+      },
+      "stable": {
+        "name": "Stabilny pomiar"
+      },
+      "connected": {
+        "name": "Połączona"
+      }
+    },
+    "sensor": {
+      "live_weight": {
+        "name": "Waga na żywo"
+      },
+      "weight": {
+        "name": "Waga"
+      },
+      "impedance": {
+        "name": "Impedancja"
+      },
+      "impedance_low": {
+        "name": "Impedancja niska"
+      },
+      "profile_id": {
+        "name": "ID profilu"
+      },
+      "last_measurement": {
+        "name": "Ostatni pomiar"
+      },
+      "last_error": {
+        "name": "Ostatni błąd"
+      },
+      "raw_final": {
+        "name": "Surowa ramka końcowa"
+      },
+      "bmi": {
+        "name": "BMI"
+      },
+      "fat_percent": {
+        "name": "Tłuszcz"
+      },
+      "water_percent": {
+        "name": "Woda"
+      },
+      "protein_percent": {
+        "name": "Białko"
+      },
+      "muscle_mass": {
+        "name": "Masa mięśni"
+      },
+      "bone_mass": {
+        "name": "Masa kości"
+      },
+      "visceral_fat": {
+        "name": "Tłuszcz trzewny"
+      },
+      "bmr": {
+        "name": "Podstawowa przemiana materii"
+      },
+      "metabolic_age": {
+        "name": "Wiek metaboliczny"
+      },
+      "ideal_weight": {
+        "name": "Waga idealna"
+      },
+      "body_type": {
+        "name": "Typ sylwetki",
+        "state": {
+          "obese": "Otyłość",
+          "overweight": "Nadwaga",
+          "thick-set": "Krępa",
+          "lack-exercise": "Brak ruchu",
+          "balanced": "Zrównoważona",
+          "balanced-muscular": "Zrównoważona umięśniona",
+          "skinny": "Szczupła",
+          "balanced-skinny": "Zrównoważona szczupła",
+          "skinny-muscular": "Szczupła umięśniona"
+        }
+      }
+    }
+  }
+}

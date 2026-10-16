@@ -1,0 +1,184 @@
+{
+  "config": {
+    "flow_title": "{name}",
+    "step": {
+      "user": {
+        "title": "Xiaomi S400 scale",
+        "description": "Pick a discovered scale or enter its Bluetooth MAC address. The scale must be in range of a Home Assistant Bluetooth adapter or an ESPHome Bluetooth proxy with `active: true`.",
+        "data": {
+          "address": "MAC address"
+        }
+      },
+      "credentials": {
+        "title": "Login token",
+        "description": "Scale {address}. Paste the 24 hex character **TOKEN** shown for this scale by Xiaomi-cloud-tokens-extractor (not the 32 character BLE KEY).",
+        "data": {
+          "token": "Token",
+          "name": "Name"
+        },
+        "data_description": {
+          "token": "24 hex characters, e.g. 0123456789abcdef01234567"
+        }
+      },
+      "reauth_confirm": {
+        "title": "Token rejected",
+        "description": "The scale rejected the login token. This happens after the scale was reset or re-added in Mi Home. Extract the token again and paste it here.",
+        "data": {
+          "token": "Token"
+        },
+        "data_description": {
+          "token": "24 hex characters, e.g. 0123456789abcdef01234567"
+        }
+      },
+      "reconfigure": {
+        "title": "Change token",
+        "data": {
+          "token": "Token"
+        },
+        "data_description": {
+          "token": "24 hex characters, e.g. 0123456789abcdef01234567"
+        }
+      }
+    },
+    "error": {
+      "invalid_mac": "Invalid MAC address (expected AA:BB:CC:DD:EE:FF)",
+      "invalid_token": "Token must be exactly 24 hex characters"
+    },
+    "abort": {
+      "already_configured": "This scale is already configured",
+      "not_supported": "This device is not a Xiaomi S400",
+      "reauth_successful": "Token updated",
+      "reconfigure_successful": "Token updated"
+    }
+  },
+  "config_subentries": {
+    "person": {
+      "entry_type": "Person",
+      "initiate_flow": {
+        "user": "Add person",
+        "reconfigure": "Edit person"
+      },
+      "step": {
+        "user": {
+          "title": "Person",
+          "description": "Map a scale user profile to a person. Weigh in alone once and check the **Profile ID** sensor to find which number is yours.",
+          "data": {
+            "name": "Name",
+            "profile_id": "Scale profile ID",
+            "sex": "Sex",
+            "birthday": "Date of birth",
+            "height": "Height"
+          }
+        },
+        "reconfigure": {
+          "title": "Person",
+          "description": "Map a scale user profile to a person. Weigh in alone once and check the **Profile ID** sensor to find which number is yours.",
+          "data": {
+            "name": "Name",
+            "profile_id": "Scale profile ID",
+            "sex": "Sex",
+            "birthday": "Date of birth",
+            "height": "Height"
+          }
+        }
+      },
+      "error": {
+        "profile_in_use": "Another person already uses this profile ID"
+      },
+      "abort": {
+        "reconfigure_successful": "Token updated"
+      }
+    }
+  },
+  "selector": {
+    "sex": {
+      "options": {
+        "male": "Male",
+        "female": "Female"
+      }
+    }
+  },
+  "entity": {
+    "binary_sensor": {
+      "on_scale": {
+        "name": "On scale"
+      },
+      "stable": {
+        "name": "Stable"
+      },
+      "connected": {
+        "name": "Connected"
+      }
+    },
+    "sensor": {
+      "live_weight": {
+        "name": "Live weight"
+      },
+      "weight": {
+        "name": "Weight"
+      },
+      "impedance": {
+        "name": "Impedance"
+      },
+      "impedance_low": {
+        "name": "Impedance low"
+      },
+      "profile_id": {
+        "name": "Profile ID"
+      },
+      "last_measurement": {
+        "name": "Last measurement"
+      },
+      "last_error": {
+        "name": "Last error"
+      },
+      "raw_final": {
+        "name": "Raw final frame"
+      },
+      "bmi": {
+        "name": "BMI"
+      },
+      "fat_percent": {
+        "name": "Body fat"
+      },
+      "water_percent": {
+        "name": "Water"
+      },
+      "protein_percent": {
+        "name": "Protein"
+      },
+      "muscle_mass": {
+        "name": "Muscle mass"
+      },
+      "bone_mass": {
+        "name": "Bone mass"
+      },
+      "visceral_fat": {
+        "name": "Visceral fat"
+      },
+      "bmr": {
+        "name": "Basal metabolism"
+      },
+      "metabolic_age": {
+        "name": "Metabolic age"
+      },
+      "ideal_weight": {
+        "name": "Ideal weight"
+      },
+      "body_type": {
+        "name": "Body type",
+        "state": {
+          "obese": "Obese",
+          "overweight": "Overweight",
+          "thick-set": "Thick-set",
+          "lack-exercise": "Lack of exercise",
+          "balanced": "Balanced",
+          "balanced-muscular": "Balanced muscular",
+          "skinny": "Skinny",
+          "balanced-skinny": "Balanced skinny",
+          "skinny-muscular": "Skinny muscular"
+        }
+      }
+    }
+  }
+}
