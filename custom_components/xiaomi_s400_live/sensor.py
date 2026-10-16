@@ -70,6 +70,13 @@ SCALE_SENSORS = (
         value_fn=_last("impedance_low_ohm"),
     ),
     ScaleSensorDescription(
+        key="heart_rate",
+        translation_key="heart_rate",
+        native_unit_of_measurement="bpm",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=_last("heart_rate"),
+    ),
+    ScaleSensorDescription(
         key="profile_id",
         translation_key="profile_id",
         value_fn=lambda s: s.last_profile_id,
@@ -131,6 +138,13 @@ PERSON_SENSORS = (
         native_unit_of_measurement=OHM,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda m: m.impedance_low_ohm,
+    ),
+    PersonSensorDescription(
+        key="heart_rate",
+        translation_key="heart_rate",
+        native_unit_of_measurement="bpm",
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda m: m.heart_rate,
     ),
     PersonSensorDescription(
         key="bmi", translation_key="bmi", state_class=SensorStateClass.MEASUREMENT,
@@ -240,8 +254,13 @@ class PersonSensor(S400Entity, RestoreSensor):
 
     def _handle_update(self) -> None:
         measurement = self.coordinator.person_measurements.get(self.person.subentry_id)
-        if measurement is None or measurement is self._measurement:
+        if measurement is None:
+            return
+        value = self.entity_description.value_fn(measurement)
+        if measurement is self._measurement and value == self._attr_native_value:
+            return
+        if measurement is self._measurement and value is None:
             return
         self._measurement = measurement
-        self._attr_native_value = self.entity_description.value_fn(measurement)
+        self._attr_native_value = value
         self.async_write_ha_state()

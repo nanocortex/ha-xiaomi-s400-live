@@ -36,9 +36,12 @@ T = {
         "token": "Token",
         "name": "Name",
         "token_desc": "24 hex characters, e.g. 0123456789abcdef01234567",
+        "bindkey": "BLE key (optional)",
+        "bindkey_desc": "32 hex characters (BLE KEY from the extractor). Optional, only needed for heart rate, which the scale sends in its broadcast instead of the GATT stream.",
+        "invalid_bindkey": "BLE key must be exactly 32 hex characters",
         "reauth_title": "Token rejected",
         "reauth_desc": "The scale rejected the login token. This happens after the scale was reset or re-added in Mi Home. Extract the token again and paste it here.",
-        "reconf_title": "Change token",
+        "reconf_title": "Change keys",
         "invalid_mac": "Invalid MAC address (expected AA:BB:CC:DD:EE:FF)",
         "invalid_token": "Token must be exactly 24 hex characters",
         "already_configured": "This scale is already configured",
@@ -60,7 +63,7 @@ T = {
         "e": {
             "on_scale": "On scale", "stable": "Stable", "connected": "Connected",
             "live_weight": "Live weight", "weight": "Weight", "impedance": "Impedance",
-            "impedance_low": "Impedance low", "profile_id": "Profile ID",
+            "impedance_low": "Impedance low", "profile_id": "Profile ID", "heart_rate": "Heart rate",
             "last_measurement": "Last measurement", "last_error": "Last error",
             "raw_final": "Raw final frame", "bmi": "BMI", "fat_percent": "Body fat",
             "water_percent": "Water", "protein_percent": "Protein", "muscle_mass": "Muscle mass",
@@ -78,9 +81,12 @@ T = {
         "token": "Token",
         "name": "Nazwa",
         "token_desc": "24 znaki hex, np. 0123456789abcdef01234567",
+        "bindkey": "BLE KEY (opcjonalnie)",
+        "bindkey_desc": "32 znaki hex (BLE KEY z extractora). Opcjonalny, potrzebny tylko do tętna, które waga wysyła w rozgłoszeniu, a nie przez połączenie GATT.",
+        "invalid_bindkey": "BLE KEY musi mieć dokładnie 32 znaki hex",
         "reauth_title": "Token odrzucony",
         "reauth_desc": "Waga odrzuciła token. Dzieje się tak po resecie wagi albo ponownym dodaniu jej w Mi Home. Wyciągnij token jeszcze raz i wklej go tutaj.",
-        "reconf_title": "Zmień token",
+        "reconf_title": "Zmień klucze",
         "invalid_mac": "Nieprawidłowy adres MAC (oczekiwany AA:BB:CC:DD:EE:FF)",
         "invalid_token": "Token musi mieć dokładnie 24 znaki hex",
         "already_configured": "Ta waga jest już skonfigurowana",
@@ -102,7 +108,7 @@ T = {
         "e": {
             "on_scale": "Na wadze", "stable": "Stabilny pomiar", "connected": "Połączona",
             "live_weight": "Waga na żywo", "weight": "Waga", "impedance": "Impedancja",
-            "impedance_low": "Impedancja niska", "profile_id": "ID profilu",
+            "impedance_low": "Impedancja niska", "profile_id": "ID profilu", "heart_rate": "Tętno",
             "last_measurement": "Ostatni pomiar", "last_error": "Ostatni błąd",
             "raw_final": "Surowa ramka końcowa", "bmi": "BMI", "fat_percent": "Tłuszcz",
             "water_percent": "Woda", "protein_percent": "Białko", "muscle_mass": "Masa mięśni",
@@ -118,6 +124,10 @@ BINARY = {"on_scale", "stable", "connected"}
 def build(lang: str) -> dict:
     t = T[lang]
     token_schema = {"data": {"token": t["token"]}, "data_description": {"token": t["token_desc"]}}
+    keys_schema = {
+        "data": {"token": t["token"], "bindkey": t["bindkey"]},
+        "data_description": {"token": t["token_desc"], "bindkey": t["bindkey_desc"]},
+    }
     person_step = {
         "title": t["person_title"],
         "description": t["person_desc"],
@@ -138,13 +148,17 @@ def build(lang: str) -> dict:
                 "user": {"title": t["user_title"], "description": t["user_desc"], "data": {"address": t["address"]}},
                 "credentials": {
                     "title": t["cred_title"], "description": t["cred_desc"],
-                    "data": {"token": t["token"], "name": t["name"]},
-                    "data_description": {"token": t["token_desc"]},
+                    "data": {"token": t["token"], "bindkey": t["bindkey"], "name": t["name"]},
+                    "data_description": {"token": t["token_desc"], "bindkey": t["bindkey_desc"]},
                 },
                 "reauth_confirm": {"title": t["reauth_title"], "description": t["reauth_desc"], **token_schema},
-                "reconfigure": {"title": t["reconf_title"], **token_schema},
+                "reconfigure": {"title": t["reconf_title"], **keys_schema},
             },
-            "error": {"invalid_mac": t["invalid_mac"], "invalid_token": t["invalid_token"]},
+            "error": {
+                "invalid_mac": t["invalid_mac"],
+                "invalid_token": t["invalid_token"],
+                "invalid_bindkey": t["invalid_bindkey"],
+            },
             "abort": {
                 "already_configured": t["already_configured"],
                 "not_supported": t["not_supported"],

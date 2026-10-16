@@ -14,10 +14,12 @@
         "description": "Scale {address}. Paste the 24 hex character **TOKEN** shown for this scale by Xiaomi-cloud-tokens-extractor (not the 32 character BLE KEY).",
         "data": {
           "token": "Token",
+          "bindkey": "BLE key (optional)",
           "name": "Name"
         },
         "data_description": {
-          "token": "24 hex characters, e.g. 0123456789abcdef01234567"
+          "token": "24 hex characters, e.g. 0123456789abcdef01234567",
+          "bindkey": "32 hex characters (BLE KEY from the extractor). Optional, only needed for heart rate, which the scale sends in its broadcast instead of the GATT stream."
         }
       },
       "reauth_confirm": {
@@ -31,18 +33,21 @@
         }
       },
       "reconfigure": {
-        "title": "Change token",
+        "title": "Change keys",
         "data": {
-          "token": "Token"
+          "token": "Token",
+          "bindkey": "BLE key (optional)"
         },
         "data_description": {
-          "token": "24 hex characters, e.g. 0123456789abcdef01234567"
+          "token": "24 hex characters, e.g. 0123456789abcdef01234567",
+          "bindkey": "32 hex characters (BLE KEY from the extractor). Optional, only needed for heart rate, which the scale sends in its broadcast instead of the GATT stream."
         }
       }
     },
     "error": {
       "invalid_mac": "Invalid MAC address (expected AA:BB:CC:DD:EE:FF)",
-      "invalid_token": "Token must be exactly 24 hex characters"
+      "invalid_token": "Token must be exactly 24 hex characters",
+      "invalid_bindkey": "BLE key must be exactly 32 hex characters"
     },
     "abort": {
       "already_configured": "This scale is already configured",
@@ -125,6 +130,9 @@
       },
       "profile_id": {
         "name": "Profile ID"
+      },
+      "heart_rate": {
+        "name": "Heart rate"
       },
       "last_measurement": {
         "name": "Last measurement"

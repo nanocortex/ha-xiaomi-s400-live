@@ -23,6 +23,7 @@ from homeassistant.core import callback
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_BINDKEY,
     CONF_BIRTHDAY,
     CONF_HEIGHT,
     CONF_PROFILE_ID,
@@ -43,6 +44,20 @@ def normalize_token(value: str) -> str:
     if len(token) != 24:
         raise ValueError
     return token
+
+
+def normalize_bindkey(value: str | None) -> str | None:
+    """Return bindkey as 32 lowercase hex chars, None when empty, or raise ValueError."""
+    if not value or not value.strip():
+        return None
+    key = re.sub(r"[^0-9a-fA-F]", "", value).lower()
+    if len(key) != 32:
+        raise ValueError
+    return key
+
+
+def _secret() -> selector.TextSelector:
+    return selector.TextSelector(selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD))
 
 
 def is_s400(info: BluetoothServiceInfoBleak) -> bool:
@@ -113,23 +128,19 @@ class S400ConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_credentials(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                token = normalize_token(user_input[CONF_TOKEN])
-            except ValueError:
-                errors[CONF_TOKEN] = "invalid_token"
-            else:
+            token, bindkey = _validate_keys(user_input, errors)
+            if not errors:
                 name = user_input.get(CONF_NAME) or "Xiaomi S400"
                 return self.async_create_entry(
                     title=name,
-                    data={CONF_ADDRESS: self._address, CONF_NAME: name, CONF_TOKEN: token},
+                    data={CONF_ADDRESS: self._address, CONF_NAME: name, CONF_TOKEN: token, CONF_BINDKEY: bindkey},
                 )
         return self.async_show_form(
             step_id="credentials",
             data_schema=vol.Schema(
                 {
-                    vol.Required(CONF_TOKEN): selector.TextSelector(
-                        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-                    ),
+                    vol.Required(CONF_TOKEN): _secret(),
+                    vol.Optional(CONF_BINDKEY): _secret(),
                     vol.Optional(CONF_NAME, default="Xiaomi S400"): str,
                 }
             ),
@@ -166,25 +177,33 @@ class S400ConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_reconfigure(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         errors: dict[str, str] = {}
         if user_input is not None:
-            try:
-                token = normalize_token(user_input[CONF_TOKEN])
-            except ValueError:
-                errors[CONF_TOKEN] = "invalid_token"
-            else:
+            token, bindkey = _validate_keys(user_input, errors)
+            if not errors:
                 return self.async_update_reload_and_abort(
-                    self._get_reconfigure_entry(), data_updates={CONF_TOKEN: token}
+                    self._get_reconfigure_entry(), data_updates={CONF_TOKEN: token, CONF_BINDKEY: bindkey}
                 )
+        entry = self._get_reconfigure_entry()
         return self.async_show_form(
             step_id="reconfigure",
-            data_schema=vol.Schema(
-                {
-                    vol.Required(CONF_TOKEN): selector.TextSelector(
-                        selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
-                    )
-                }
+            data_schema=self.add_suggested_values_to_schema(
+                vol.Schema({vol.Required(CONF_TOKEN): _secret(), vol.Optional(CONF_BINDKEY): _secret()}),
+                {CONF_TOKEN: entry.data.get(CONF_TOKEN), CONF_BINDKEY: entry.data.get(CONF_BINDKEY)},
             ),
             errors=errors,
         )
+
+
+def _validate_keys(user_input: dict[str, Any], errors: dict[str, str]) -> tuple[str | None, str | None]:
+    token = bindkey = None
+    try:
+        token = normalize_token(user_input[CONF_TOKEN])
+    except ValueError:
+        errors[CONF_TOKEN] = "invalid_token"
+    try:
+        bindkey = normalize_bindkey(user_input.get(CONF_BINDKEY))
+    except ValueError:
+        errors[CONF_BINDKEY] = "invalid_bindkey"
+    return token, bindkey
 
 
 def _person_schema(defaults: Mapping[str, Any]) -> vol.Schema:

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from homeassistant.config_entries import SOURCE_USER, ConfigSubentryData
@@ -59,15 +59,15 @@ async def test_user_flow(hass: HomeAssistant) -> None:
             result["flow_id"], {CONF_TOKEN: TOKEN_HEX.upper(), CONF_NAME: "Waga"}
         )
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    assert result["data"] == {CONF_ADDRESS: ADDRESS, CONF_NAME: "Waga", CONF_TOKEN: TOKEN_HEX}
+    assert result["data"] == {CONF_ADDRESS: ADDRESS, CONF_NAME: "Waga", CONF_TOKEN: TOKEN_HEX, "bindkey": None}
 
 
-def _entry(persons: list[tuple[str, int, str]]) -> MockConfigEntry:
+def _entry(persons: list[tuple[str, int, str]], bindkey: str | None = None) -> MockConfigEntry:
     return MockConfigEntry(
         domain=DOMAIN,
         title="Waga",
         unique_id=ADDRESS,
-        data={CONF_ADDRESS: ADDRESS, CONF_NAME: "Waga", CONF_TOKEN: TOKEN_HEX},
+        data={CONF_ADDRESS: ADDRESS, CONF_NAME: "Waga", CONF_TOKEN: TOKEN_HEX, "bindkey": bindkey},
         subentries_data=[
             ConfigSubentryData(
                 subentry_type="person",
@@ -146,6 +146,7 @@ async def test_measurement_routed_to_person(hass: HomeAssistant) -> None:
     assert state(f"{ADDRESS}_profile_id") == "2"
     assert float(state(f"{ADDRESS}_{asia_sub}_fat_percent")) > 0
     assert state(f"{ADDRESS}_connected") == "off"
+    assert state(f"{ADDRESS}_stable") == "off"
     assert events[-1].data["person"] == "Asia"
 
     await run(FINAL_DAVE, ["909,1"])
@@ -153,4 +154,64 @@ async def test_measurement_routed_to_person(hass: HomeAssistant) -> None:
     assert state(f"{ADDRESS}_{asia_sub}_weight") == "61.2"
     assert state(f"{ADDRESS}_{dave_sub}_impedance") == "489.0"
 
+    assert await hass.config_entries.async_unload(entry.entry_id)
+
+
+BINDKEY = bytes.fromhex("0102030405060708090a0b0c0d0e0f10")
+
+
+def _hr_adv(profile: int, weight_x10: int, hr: int, imp_x10: int):
+    import struct
+
+    from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
+
+    from custom_components.xiaomi_s400_live.s400.mibeacon import encrypt_advertisement
+
+    packed = weight_x10 | ((hr - 50) << 11) | (imp_x10 << 18)
+    obj = struct.pack("<HB", 0x6E16, 9) + struct.pack("<BII", profile, packed, 0)
+    data = encrypt_advertisement(obj, ADDRESS, BINDKEY)
+    info = MagicMock(spec=BluetoothServiceInfoBleak)
+    info.service_data = {"0000fe95-0000-1000-8000-00805f9b34fb": data}
+    info.rssi = -60
+    return info
+
+
+def test_mibeacon_roundtrip() -> None:
+    from custom_components.xiaomi_s400_live.s400.mibeacon import decode_advertisement
+
+    info = _hr_adv(2, 612, 66, 5650)
+    r = decode_advertisement(info.service_data["0000fe95-0000-1000-8000-00805f9b34fb"], ADDRESS, BINDKEY)
+    assert (r.profile_id, r.weight_kg, r.heart_rate, r.impedance_ohm) == (2, 61.2, 66, 565.0)
+    assert decode_advertisement(info.service_data["0000fe95-0000-1000-8000-00805f9b34fb"], ADDRESS, bytes(16)) is None
+
+
+async def test_heart_rate_from_advertisement(hass: HomeAssistant) -> None:
+    entry = _entry([("Dave", 1, "male"), ("Asia", 2, "female")], bindkey=BINDKEY.hex())
+    entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(entry.entry_id)
+    await hass.async_block_till_done()
+    coordinator = entry.runtime_data
+    coordinator._last_session_end = 10**12  # suppress connection attempts from adverts
+
+    events = []
+    hass.bus.async_listen(EVENT_MEASUREMENT, events.append)
+
+    from custom_components.xiaomi_s400_live.s400 import parse_payload
+
+    from .fake_scale import csv_plaintext
+
+    coordinator._handle_final(parse_payload(csv_plaintext(FINAL_ASIA)))
+    await hass.async_block_till_done()
+    assert events == []  # waits for heart rate
+
+    coordinator._async_on_advertisement(_hr_adv(1, 909, 80, 4890), None)  # other person: ignored
+    coordinator._async_on_advertisement(_hr_adv(2, 612, 66, 5650), None)
+    await hass.async_block_till_done()
+
+    reg = er.async_get(hass)
+    ids = {e.unique_id: e.entity_id for e in er.async_entries_for_config_entry(reg, entry.entry_id)}
+    asia_sub = next(s for s in entry.subentries.values() if s.title == "Asia").subentry_id
+    assert hass.states.get(ids[f"{ADDRESS}_{asia_sub}_heart_rate"]).state == "66"
+    assert hass.states.get(ids[f"{ADDRESS}_heart_rate"]).state == "66"
+    assert len(events) == 1 and events[0].data["heart_rate"] == 66 and events[0].data["person"] == "Asia"
     assert await hass.config_entries.async_unload(entry.entry_id)

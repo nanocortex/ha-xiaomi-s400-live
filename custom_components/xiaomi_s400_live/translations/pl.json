@@ -14,10 +14,12 @@
         "description": "Waga {address}. Wklej 24-znakowy **TOKEN** tej wagi z Xiaomi-cloud-tokens-extractor (nie 32-znakowy BLE KEY).",
         "data": {
           "token": "Token",
+          "bindkey": "BLE KEY (opcjonalnie)",
           "name": "Nazwa"
         },
         "data_description": {
-          "token": "24 znaki hex, np. 0123456789abcdef01234567"
+          "token": "24 znaki hex, np. 0123456789abcdef01234567",
+          "bindkey": "32 znaki hex (BLE KEY z extractora). Opcjonalny, potrzebny tylko do tętna, które waga wysyła w rozgłoszeniu, a nie przez połączenie GATT."
         }
       },
       "reauth_confirm": {
@@ -31,18 +33,21 @@
         }
       },
       "reconfigure": {
-        "title": "Zmień token",
+        "title": "Zmień klucze",
         "data": {
-          "token": "Token"
+          "token": "Token",
+          "bindkey": "BLE KEY (opcjonalnie)"
         },
         "data_description": {
-          "token": "24 znaki hex, np. 0123456789abcdef01234567"
+          "token": "24 znaki hex, np. 0123456789abcdef01234567",
+          "bindkey": "32 znaki hex (BLE KEY z extractora). Opcjonalny, potrzebny tylko do tętna, które waga wysyła w rozgłoszeniu, a nie przez połączenie GATT."
         }
       }
     },
     "error": {
       "invalid_mac": "Nieprawidłowy adres MAC (oczekiwany AA:BB:CC:DD:EE:FF)",
-      "invalid_token": "Token musi mieć dokładnie 24 znaki hex"
+      "invalid_token": "Token musi mieć dokładnie 24 znaki hex",
+      "invalid_bindkey": "BLE KEY musi mieć dokładnie 32 znaki hex"
     },
     "abort": {
       "already_configured": "Ta waga jest już skonfigurowana",
@@ -125,6 +130,9 @@
       },
       "profile_id": {
         "name": "ID profilu"
+      },
+      "heart_rate": {
+        "name": "Tętno"
       },
       "last_measurement": {
         "name": "Ostatni pomiar"

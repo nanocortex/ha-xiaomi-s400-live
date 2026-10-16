@@ -24,17 +24,21 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     AFTER_FINAL_GRACE,
+    CONF_BINDKEY,
     CONF_BIRTHDAY,
     CONF_HEIGHT,
     CONF_PROFILE_ID,
     CONF_SEX,
     CONF_TOKEN,
     EVENT_MEASUREMENT,
+    HEART_RATE_WAIT,
     IDLE_TIMEOUT,
+    MIBEACON_UUID,
     RECONNECT_COOLDOWN,
     SUBENTRY_PERSON,
 )
 from .s400 import AuthError, BadTokenError, S400Session, ScaleEvent, UserProfile, compute
+from .s400.mibeacon import decode_advertisement
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -71,6 +75,7 @@ class Measurement:
     impedance_ohm: float | None
     impedance_low_ohm: float | None
     measured_at: datetime
+    heart_rate: int | None = None
     body: dict[str, Any] = field(default_factory=dict)
     raw_fields: list[str] = field(default_factory=list)
 
@@ -86,6 +91,7 @@ class ScaleState:
     last_profile_id: int | None = None
     last_measurement: Measurement | None = None
     last_error: str | None = None
+    heart_rate: int | None = None
     last_raw_fields: list[str] = field(default_factory=list)
 
 
@@ -98,6 +104,12 @@ class S400Coordinator:
         self.address: str = entry.data[CONF_ADDRESS].upper()
         self.name: str = entry.data.get(CONF_NAME) or entry.title
         self.token = bytes.fromhex(entry.data[CONF_TOKEN])
+        bindkey = entry.data.get(CONF_BINDKEY)
+        self.bindkey = bytes.fromhex(bindkey) if bindkey else None
+        self._hr_deadline = 0.0
+        self._pending_event: tuple[Measurement, Person | None] | None = None
+        self._pending_handle: asyncio.TimerHandle | None = None
+        self._last_adv_hr: tuple[float, int, int] | None = None  # (monotonic, profile_id, bpm)
         self.state = ScaleState()
         self.persons: dict[int, Person] = {}
         self.person_measurements: dict[str, Measurement] = {}
@@ -152,6 +164,8 @@ class S400Coordinator:
         for unsub in self._unsub:
             unsub()
         self._unsub.clear()
+        if self._pending_handle:
+            self._pending_handle.cancel()
         if self._task:
             self._task.cancel()
             try:
@@ -163,6 +177,8 @@ class S400Coordinator:
     def _async_on_advertisement(
         self, service_info: bluetooth.BluetoothServiceInfoBleak, change: bluetooth.BluetoothChange
     ) -> None:
+        if self.bindkey:
+            self._check_heart_rate(service_info)
         if self._stopping or (self._task and not self._task.done()):
             return
         if time.monotonic() - self._last_session_end < RECONNECT_COOLDOWN:
@@ -198,6 +214,7 @@ class S400Coordinator:
             session = S400Session(client, self.token)
             session_ref.append(session)
             self.state.connected = True
+            self.state.stable = False
             self.state.last_error = None
             self._notify()
 
@@ -220,6 +237,7 @@ class S400Coordinator:
             self._last_session_end = time.monotonic()
             self.state.connected = False
             self.state.on_scale = False
+            self.state.stable = False
             self._notify()
 
     async def _async_pump(self, session: S400Session) -> None:
@@ -273,18 +291,71 @@ class S400Coordinator:
         self.state.last_raw_fields = event.fields
         if person:
             self.person_measurements[person.subentry_id] = measurement
+        self._hr_deadline = time.monotonic() + HEART_RATE_WAIT
+        # The heart-rate advertisement may already have arrived before the GATT final frame.
+        if self._last_adv_hr and time.monotonic() - self._last_adv_hr[0] < HEART_RATE_WAIT:
+            if self._last_adv_hr[1] == event.profile_id:
+                measurement.heart_rate = self._last_adv_hr[2]
         self._notify()
 
+        self._fire_pending()  # flush a previous measurement still waiting for heart rate
+        if self.bindkey and measurement.heart_rate is None:
+            # Heart rate arrives in a later advertisement; fire the event once we have it (or give up).
+            self._pending_event = (measurement, person)
+            self._pending_handle = self.hass.loop.call_later(HEART_RATE_WAIT, self._fire_pending)
+        else:
+            self._fire(measurement, person)
+
+    @callback
+    def _check_heart_rate(self, service_info: bluetooth.BluetoothServiceInfoBleak) -> None:
+        data = service_info.service_data.get(MIBEACON_UUID)
+        if not data or self.bindkey is None:
+            return
+        reading = decode_advertisement(data, self.address, self.bindkey)
+        if reading is None:
+            return
+        _LOGGER.debug("Advertisement reading: %s", reading)
+        if reading.heart_rate is not None:
+            self.state.heart_rate = reading.heart_rate
+            self._last_adv_hr = (time.monotonic(), reading.profile_id, reading.heart_rate)
+        m = self.state.last_measurement
+        if (
+            reading.heart_rate is None
+            or m is None
+            or m.heart_rate is not None
+            or time.monotonic() > self._hr_deadline
+            or reading.profile_id != m.profile_id
+        ):
+            self._notify()
+            return
+        m.heart_rate = reading.heart_rate
+        self._notify()
+        self._fire_pending()
+
+    @callback
+    def _fire_pending(self) -> None:
+        pending = self._pending_event
+        if self._pending_handle:
+            self._pending_handle.cancel()
+        self._pending_handle = None
+        if pending is None:
+            return
+        self._pending_event = None
+        self._fire(*pending)
+
+    @callback
+    def _fire(self, measurement: Measurement, person: Person | None) -> None:
         self.hass.bus.async_fire(
             EVENT_MEASUREMENT,
             {
                 "address": self.address,
-                "profile_id": event.profile_id,
+                "profile_id": measurement.profile_id,
                 "person": person.name if person else None,
-                "weight": event.weight_kg,
-                "impedance": event.impedance_ohm,
-                "impedance_low": event.impedance_low_ohm,
-                "measured_at": measured_at.isoformat(),
+                "weight": measurement.weight_kg,
+                "impedance": measurement.impedance_ohm,
+                "impedance_low": measurement.impedance_low_ohm,
+                "heart_rate": measurement.heart_rate,
+                "measured_at": measurement.measured_at.isoformat(),
                 **measurement.body,
             },
         )

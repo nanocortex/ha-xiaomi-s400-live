@@ -10,8 +10,8 @@ Unlike the built-in `xiaomi_ble` integration, which passively listens for advert
 | Final result | 3 to 5 s after stepping off | as soon as it stabilizes |
 | Profile + weight + impedance in one frame | arrive as separate entity updates | one atomic frame, never mixed between people |
 | Per-person entities and body composition | needs BodyMiScale and templates | built in |
-| Heart rate | yes | not yet (see below) |
-| Needs | bindkey | login **token** (24 hex chars) |
+| Heart rate | yes | yes, if you also enter the BLE KEY (read from the broadcast) |
+| Needs | bindkey | login **token** (24 hex chars), optionally BLE KEY for heart rate |
 
 Works with a local Bluetooth adapter **and with ESPHome Bluetooth proxies** (ESP32), since all connections go through Home Assistant's Bluetooth stack.
 
@@ -41,7 +41,7 @@ Works with a local Bluetooth adapter **and with ESPHome Bluetooth proxies** (ESP
 1. HACS → ⋮ → **Custom repositories** → URL `https://github.com/nanocortex/ha-xiaomi-s400-live`, type **Integration**.
 2. Install **Xiaomi S400 Live**, restart Home Assistant.
 3. **Settings → Devices & services → Add integration → Xiaomi S400 Live** (or accept the discovered scale).
-4. Pick the scale or enter its MAC address, then paste the token.
+4. Pick the scale or enter its MAC address, then paste the token. Optionally also paste the **BLE KEY** (32 hex chars) to get heart rate.
 5. On the integration card click **Add person** for each user: name, scale profile ID, sex, date of birth, height.
 
 ### Finding your profile ID
@@ -59,11 +59,11 @@ Weigh yourself alone and check the **Profile ID** sensor on the scale device. Nu
 
 **One device per person**
 
-Weight, impedance (2x), BMI, body fat, water, protein, muscle mass, bone mass, visceral fat, basal metabolism, metabolic age, ideal weight, body type, last measurement. They update **only** when that person's profile ID is measured, and keep their value across restarts.
+Weight, impedance (2x), heart rate, BMI, body fat, water, protein, muscle mass, bone mass, visceral fat, basal metabolism, metabolic age, ideal weight, body type, last measurement. They update **only** when that person's profile ID is measured, and keep their value across restarts.
 
 **Event**
 
-`xiaomi_s400_live_measurement` fires on every final measurement with `person`, `profile_id`, `weight`, `impedance`, `impedance_low`, `measured_at` and all body composition values.
+`xiaomi_s400_live_measurement` fires on every final measurement with `person`, `profile_id`, `weight`, `impedance`, `impedance_low`, `heart_rate`, `measured_at` and all body composition values. With a BLE KEY configured, the event waits up to 20 s for the heart rate advertisement.
 
 Body composition values are estimates computed from weight, impedance and your profile, using formulas ported from the Mi Fit app. They are not medical-grade.
 
@@ -84,7 +84,9 @@ logger:
     custom_components.xiaomi_s400_live: debug
 ```
 
-The log shows every frame sent and received, plus the decoded final frame fields. Please attach it when reporting issues. **Heart rate**: the S400 measures it, but it isn't mapped in the GATT final frame yet. If you enable the `Raw final frame` sensor and tell us your heart rate from the Mi app for the same measurement, we can map the field.
+The log shows every frame sent and received, plus the decoded final frame fields. Please attach it when reporting issues.
+
+**Heart rate**: the GATT final frame doesn't contain it (fields 7 to 29 are always zero). The scale only sends it in its encrypted MiBeacon broadcast right after the measurement. That is why heart rate needs the BLE KEY, and why it shows up a moment after the weight.
 
 ## Credits
 

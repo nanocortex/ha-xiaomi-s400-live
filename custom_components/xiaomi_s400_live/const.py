@@ -5,6 +5,7 @@ from __future__ import annotations
 DOMAIN = "xiaomi_s400_live"
 
 CONF_TOKEN = "token"
+CONF_BINDKEY = "bindkey"
 CONF_PROFILE_ID = "profile_id"
 CONF_SEX = "sex"
 CONF_BIRTHDAY = "birthday"
@@ -24,3 +25,6 @@ AFTER_FINAL_GRACE = 4.0
 RECONNECT_COOLDOWN = 10.0
 
 EVENT_MEASUREMENT = f"{DOMAIN}_measurement"
+
+# Heart rate only comes in the advertisement after the measurement; wait this long for it.
+HEART_RATE_WAIT = 20.0
